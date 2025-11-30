@@ -1,5 +1,7 @@
 # Parcel MCP Server
 
+[![smithery badge](https://smithery.ai/badge/@NOVA-3951/parcel-api-mcp)](https://smithery.ai/server/@NOVA-3951/parcel-api-mcp)
+
 An MCP (Model Context Protocol) server for the Parcel delivery tracking API. This server allows AI assistants to interact with your Parcel account to add deliveries and track their status.
 
 ## Features
