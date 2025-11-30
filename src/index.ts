@@ -4,6 +4,10 @@ import { z } from "zod";
 
 const PARCEL_API_BASE = "https://api.parcel.app/external";
 
+const configSchema = z.object({
+  parcelApiKey: z.string().min(1, "Parcel API key is required"),
+});
+
 const DELIVERY_STATUS_CODES: Record<number, string> = {
   0: "Completed delivery",
   1: "Frozen delivery (no recent updates)",
@@ -262,11 +266,35 @@ function createServer(parcelApiKey: string) {
   return server;
 }
 
+function getApiKeyFromArgs(): string | null {
+  const configArgIndex = process.argv.indexOf("--config");
+  if (configArgIndex !== -1 && process.argv[configArgIndex + 1]) {
+    try {
+      const base64Config = process.argv[configArgIndex + 1];
+      const jsonConfig = Buffer.from(base64Config, "base64").toString("utf-8");
+      const parsed = JSON.parse(jsonConfig);
+      const validated = configSchema.parse(parsed);
+      return validated.parcelApiKey;
+    } catch (error) {
+      console.error("Failed to parse config from CLI argument:", error);
+      return null;
+    }
+  }
+  return null;
+}
+
 async function main() {
-  const apiKey = process.env.PARCEL_API_KEY;
+  let apiKey = getApiKeyFromArgs();
   
   if (!apiKey) {
-    console.error("Error: PARCEL_API_KEY environment variable is required");
+    apiKey = process.env.PARCEL_API_KEY || null;
+    if (apiKey) {
+      console.error("Using PARCEL_API_KEY from environment (testing mode)");
+    }
+  }
+  
+  if (!apiKey) {
+    console.error("Error: No API key provided. Use --config <base64> or set PARCEL_API_KEY environment variable for testing.");
     process.exit(1);
   }
 

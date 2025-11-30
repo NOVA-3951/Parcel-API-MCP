@@ -42,18 +42,20 @@ Get the meaning of delivery status codes (0-8).
 - A Parcel premium account
 - An API key from [web.parcelapp.net](https://web.parcelapp.net/)
 
-### Using Smithery
+### Using Smithery (Recommended)
 
 1. Install the server using Smithery CLI:
 ```bash
 smithery install parcel-mcp-server --client <your-client>
 ```
 
-2. You'll be prompted to enter your Parcel API key.
+2. You'll be prompted to enter your Parcel API key during the installation flow.
 
-### Manual Installation
+The API key is securely passed to the server via Smithery's configuration system.
 
-If you want to use this server locally or with Claude Desktop:
+### Local Testing
+
+For local development and testing, the server supports environment variables:
 
 1. Clone this repository
 2. Build the server:
@@ -76,6 +78,8 @@ npm run build
   }
 }
 ```
+
+**Note:** The `PARCEL_API_KEY` environment variable is intended for testing only. Production deployments should use Smithery's configuration flow.
 
 ## Development
 

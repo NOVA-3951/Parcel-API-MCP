@@ -46,14 +46,14 @@ The server integrates with the Parcel API:
 
 ## Configuration
 
-### User Configuration
-Users must provide their Parcel API key when installing the server. This is handled through the `configSchema` export in `src/index.ts`.
+### Production (Smithery)
+Users provide their Parcel API key during the Smithery installation flow. The key is passed securely via base64-encoded CLI argument.
+
+### Testing (Local)
+For local development, set the `PARCEL_API_KEY` environment variable. This is a fallback mode intended for testing only.
 
 ### Development
 Run `npm run dev` to start the development server with hot-reload.
-
-### Production
-The server is deployed on Smithery and accessible via WebSocket transport.
 
 ## Rate Limits
 - Add Delivery: 20 requests per day

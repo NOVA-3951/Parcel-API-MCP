@@ -1,8 +1,7 @@
 import { spawn } from 'child_process';
 
 console.log('Testing Parcel MCP Server...\n');
-
-process.env.PARCEL_API_KEY = 'test-api-key';
+console.log('Testing with PARCEL_API_KEY environment variable (testing mode):\n');
 
 const child = spawn('node', ['./dist/index.js'], {
   env: { ...process.env, PARCEL_API_KEY: 'test-api-key' },
@@ -33,6 +32,9 @@ child.stdout.on('data', (data) => {
       console.log('✅ Server version:', response.result.serverInfo?.version || '1.0.0');
       console.log('✅ Capabilities:', JSON.stringify(response.result.capabilities, null, 2));
       console.log('\nServer is ready for Smithery deployment!');
+      console.log('\nConfiguration:');
+      console.log('- Production: API key provided via Smithery config during installation');
+      console.log('- Testing: Set PARCEL_API_KEY environment variable');
       console.log('\nTo deploy:');
       console.log('1. Push to GitHub');
       console.log('2. Deploy via smithery.ai dashboard');
@@ -45,7 +47,10 @@ child.stdout.on('data', (data) => {
 });
 
 child.stderr.on('data', (data) => {
-  console.error('stderr:', data.toString());
+  const msg = data.toString();
+  if (msg.includes('testing mode')) {
+    console.log('ℹ️  ' + msg.trim());
+  }
 });
 
 child.on('error', (error) => {

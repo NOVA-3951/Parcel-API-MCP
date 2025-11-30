@@ -8,13 +8,13 @@ startCommand:
       parcelApiKey:
         type: string
         description: Your Parcel API key from web.parcelapp.net
-  commandFunction: |
-    (config) => ({
-      command: 'node',
-      args: ['./dist/index.js'],
-      env: {
-        PARCEL_API_KEY: config.parcelApiKey
-      }
-    })
+  commandFunction: |-
+    (config) => {
+      const configBase64 = Buffer.from(JSON.stringify(config)).toString('base64');
+      return {
+        command: 'node',
+        args: ['./dist/index.js', '--config', configBase64]
+      };
+    }
   exampleConfig:
     parcelApiKey: "your-parcel-api-key"
