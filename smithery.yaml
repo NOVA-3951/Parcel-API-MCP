@@ -1,0 +1,20 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - parcelApiKey
+    properties:
+      parcelApiKey:
+        type: string
+        description: Your Parcel API key from web.parcelapp.net
+  commandFunction: |
+    (config) => ({
+      command: 'node',
+      args: ['./dist/index.js'],
+      env: {
+        PARCEL_API_KEY: config.parcelApiKey
+      }
+    })
+  exampleConfig:
+    parcelApiKey: "your-parcel-api-key"

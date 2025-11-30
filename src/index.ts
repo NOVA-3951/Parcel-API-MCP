@@ -1,16 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
 const PARCEL_API_BASE = "https://api.parcel.app/external";
-
-export const configSchema = z.object({
-  parcelApiKey: z.string().describe("Your Parcel API key from web.parcelapp.net"),
-});
-
-interface DeliveryStatusCode {
-  code: number;
-  description: string;
-}
 
 const DELIVERY_STATUS_CODES: Record<number, string> = {
   0: "Completed delivery",
@@ -58,9 +50,7 @@ async function makeParcelRequest(
   return data;
 }
 
-export default function createServer(config: { config: z.infer<typeof configSchema> }) {
-  const { parcelApiKey } = config.config;
-
+function createServer(parcelApiKey: string) {
   const server = new McpServer({
     name: "parcel-tracking",
     version: "1.0.0",
@@ -122,7 +112,7 @@ export default function createServer(config: { config: z.infer<typeof configSche
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(result, null, 2),
             },
           ],
@@ -133,7 +123,7 @@ export default function createServer(config: { config: z.infer<typeof configSche
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: `Error adding delivery: ${errorMessage}`,
             },
           ],
@@ -176,7 +166,7 @@ export default function createServer(config: { config: z.infer<typeof configSche
           return {
             content: [
               {
-                type: "text",
+                type: "text" as const,
                 text: JSON.stringify(
                   { ...data, deliveries: formattedDeliveries },
                   null,
@@ -190,7 +180,7 @@ export default function createServer(config: { config: z.infer<typeof configSche
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(result, null, 2),
             },
           ],
@@ -201,7 +191,7 @@ export default function createServer(config: { config: z.infer<typeof configSche
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: `Error fetching deliveries: ${errorMessage}`,
             },
           ],
@@ -225,7 +215,7 @@ export default function createServer(config: { config: z.infer<typeof configSche
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(carriers, null, 2),
             },
           ],
@@ -236,7 +226,7 @@ export default function createServer(config: { config: z.infer<typeof configSche
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: `Error fetching supported carriers: ${errorMessage}`,
             },
           ],
@@ -261,7 +251,7 @@ export default function createServer(config: { config: z.infer<typeof configSche
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: JSON.stringify(statusInfo, null, 2),
           },
         ],
@@ -269,5 +259,24 @@ export default function createServer(config: { config: z.infer<typeof configSche
     }
   );
 
-  return server.server;
+  return server;
 }
+
+async function main() {
+  const apiKey = process.env.PARCEL_API_KEY;
+  
+  if (!apiKey) {
+    console.error("Error: PARCEL_API_KEY environment variable is required");
+    process.exit(1);
+  }
+
+  const server = createServer(apiKey);
+  const transport = new StdioServerTransport();
+  
+  await server.connect(transport);
+}
+
+main().catch((error) => {
+  console.error("Server error:", error);
+  process.exit(1);
+});

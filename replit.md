@@ -18,7 +18,7 @@ This project is an HTTP MCP (Model Context Protocol) server for the Parcel deliv
 ├── dist/                 # Compiled JavaScript (generated)
 ├── package.json          # Project dependencies and scripts
 ├── tsconfig.json         # TypeScript configuration
-├── smithery.config.js    # Smithery deployment configuration
+├── smithery.yaml         # Smithery deployment configuration
 └── README.md             # Documentation
 ```
 
