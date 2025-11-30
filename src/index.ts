@@ -1,11 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
 const PARCEL_API_BASE = "https://api.parcel.app/external";
 
-const configSchema = z.object({
-  parcelApiKey: z.string().min(1, "Parcel API key is required"),
+export const configSchema = z.object({
+  parcelApiKey: z.string().describe("Your Parcel API key from web.parcelapp.net"),
 });
 
 const DELIVERY_STATUS_CODES: Record<number, string> = {
@@ -54,7 +53,9 @@ async function makeParcelRequest(
   return data;
 }
 
-function createServer(parcelApiKey: string) {
+export default function createServer({ config }: { config: z.infer<typeof configSchema> }) {
+  const { parcelApiKey } = config;
+
   const server = new McpServer({
     name: "parcel-tracking",
     version: "1.0.0",
@@ -263,48 +264,5 @@ function createServer(parcelApiKey: string) {
     }
   );
 
-  return server;
+  return server.server;
 }
-
-function getApiKeyFromArgs(): string | null {
-  const configArgIndex = process.argv.indexOf("--config");
-  if (configArgIndex !== -1 && process.argv[configArgIndex + 1]) {
-    try {
-      const base64Config = process.argv[configArgIndex + 1];
-      const jsonConfig = Buffer.from(base64Config, "base64").toString("utf-8");
-      const parsed = JSON.parse(jsonConfig);
-      const validated = configSchema.parse(parsed);
-      return validated.parcelApiKey;
-    } catch (error) {
-      console.error("Failed to parse config from CLI argument:", error);
-      return null;
-    }
-  }
-  return null;
-}
-
-async function main() {
-  let apiKey = getApiKeyFromArgs();
-  
-  if (!apiKey) {
-    apiKey = process.env.PARCEL_API_KEY || null;
-    if (apiKey) {
-      console.error("Using PARCEL_API_KEY from environment (testing mode)");
-    }
-  }
-  
-  if (!apiKey) {
-    console.error("Error: No API key provided. Use --config <base64> or set PARCEL_API_KEY environment variable for testing.");
-    process.exit(1);
-  }
-
-  const server = createServer(apiKey);
-  const transport = new StdioServerTransport();
-  
-  await server.connect(transport);
-}
-
-main().catch((error) => {
-  console.error("Server error:", error);
-  process.exit(1);
-});
