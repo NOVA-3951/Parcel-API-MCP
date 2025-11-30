@@ -49,8 +49,9 @@ async function makeParcelRequest(
   const data = await response.json();
 
   if (!response.ok) {
+    const errorData = data as { error_message?: string };
     throw new Error(
-      `Parcel API error: ${data.error_message || response.statusText}`
+      `Parcel API error: ${errorData.error_message || response.statusText}`
     );
   }
 
