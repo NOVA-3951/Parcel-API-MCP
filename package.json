@@ -1,0 +1,24 @@
+{
+  "name": "parcel-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Parcel delivery tracking API",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "smithery dev",
+    "prepare": "npm run build"
+  },
+  "keywords": ["mcp", "parcel", "delivery", "tracking"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@smithery/cli": "^0.10.11",
+    "@types/node": "^20.17.9",
+    "typescript": "^5.7.2"
+  }
+}
