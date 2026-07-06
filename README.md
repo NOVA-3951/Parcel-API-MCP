@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/nova-3951-parcel-api-mcp-badge.png)](https://mseep.ai/app/nova-3951-parcel-api-mcp)
+
 # Parcel MCP Server
 
 [![smithery badge](https://smithery.ai/badge/@NOVA-3951/parcel-api-mcp)](https://smithery.ai/server/@NOVA-3951/parcel-api-mcp)
