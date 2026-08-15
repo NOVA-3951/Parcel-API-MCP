@@ -1,122 +1,65 @@
 # Parcel MCP Server
 
-An MCP (Model Context Protocol) server for the Parcel delivery tracking API. This server allows AI assistants to interact with your Parcel account to add deliveries and track their status.
+An HTTP MCP (Model Context Protocol) server for the Parcel delivery tracking API, hosted on Replit and secured with OAuth 2.1 backed by **Replit Auth**. Only users who sign in with a Replit account can obtain a token and use the tools.
 
 ## Features
 
-This MCP server provides four tools:
+### Tools
 
-### 1. `add_delivery`
-Add a new delivery to Parcel for tracking.
+1. **`add_delivery`** — Add a new delivery to Parcel for tracking
+   - `tracking_number` (required), `carrier_code` (required), `description` (required)
+   - `language` (optional, ISO 639-1), `send_push_confirmation` (optional)
+   - Rate limit: 20 requests per day
+2. **`get_deliveries`** — Get recent or active deliveries
+   - `filter_mode` (optional): `active` or `recent` (default)
+   - Rate limit: 20 requests per hour
+3. **`get_supported_carriers`** — List supported carriers and their codes
+4. **`get_delivery_status_codes`** — Explain delivery status codes (0-8)
 
-**Parameters:**
-- `tracking_number` (required): Tracking number for the delivery
-- `carrier_code` (required): Carrier code (e.g., 'ups', 'fedex', 'usps', 'pholder' for placeholder)
-- `description` (required): Description for the delivery
-- `language` (optional): Language code (ISO 639-1, e.g., 'en', 'es'). Default: en
-- `send_push_confirmation` (optional): Set to true to receive a push notification. Default: false
+## How access control works
 
-**Note:** Rate limit is 20 requests per day.
+The server implements the MCP authorization spec (OAuth 2.1):
 
-### 2. `get_deliveries`
-Get your recent or active deliveries from Parcel.
+- `POST /mcp` — the MCP endpoint (Streamable HTTP transport). Requires a bearer token; unauthenticated requests get a 401 with a `WWW-Authenticate` challenge pointing at the discovery metadata.
+- `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/mcp` — discovery metadata so clients can auto-configure.
+- `/register` — dynamic client registration.
+- `/authorize` — sends the user through **Replit Auth** login before issuing an authorization code (PKCE required).
+- `/token` — exchanges codes/refresh tokens for bearer tokens bound to the authenticated Replit user.
+- `/revoke` — token revocation.
 
-**Parameters:**
-- `filter_mode` (optional): 'active' for active deliveries or 'recent' for recent ones. Default: 'recent'
+Tokens are held in memory: a server restart just means MCP clients transparently re-authenticate.
 
-**Note:** Rate limit is 20 requests per hour.
+## Connecting from an MCP client
 
-### 3. `get_supported_carriers`
-Get the list of supported carriers and their codes.
+Add the server URL to any MCP client that supports OAuth (Claude, Cursor, etc.):
 
-**No parameters required.**
-
-### 4. `get_delivery_status_codes`
-Get the meaning of delivery status codes (0-8).
-
-**No parameters required.**
-
-## Installation
-
-### Prerequisites
-- A Parcel premium account
-- An API key from [web.parcelapp.net](https://web.parcelapp.net/)
-
-### Using Smithery (Recommended)
-
-1. Install the server using Smithery CLI:
-```bash
-smithery install parcel-mcp-server --client <your-client>
+```
+https://<your-repl-domain>/mcp
 ```
 
-2. You'll be prompted to enter your Parcel API key during the installation flow.
+On first connection a browser window opens and asks you to sign in with your Replit account. After login, the client receives a token and the tools become available.
 
-The API key is securely passed to the server via Smithery's configuration system.
+## Configuration
 
-### Local Testing
+| Variable | Purpose |
+|----------|---------|
+| `PARCEL_API_KEY` | Server-side Parcel API key (from [web.parcelapp.net](https://web.parcelapp.net/)). Never exposed to clients. |
+| `SESSION_SECRET` | Secret for the login-flow session cookies. |
+| `ALLOWED_REPLIT_USERS` | Optional. Comma-separated Replit user IDs or emails allowed to connect. When unset, **any** Replit-authenticated user may connect. |
 
-For local development and testing, the server supports environment variables:
-
-1. Clone this repository
-2. Build the server:
-```bash
-npm install
-npm run build
-```
-
-3. Add to your MCP client configuration (e.g., Claude Desktop):
-```json
-{
-  "mcpServers": {
-    "parcel": {
-      "command": "node",
-      "args": ["/path/to/parcel-mcp-server/dist/index.js"],
-      "env": {
-        "PARCEL_API_KEY": "your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-**Note:** The `PARCEL_API_KEY` environment variable is intended for testing only. Production deployments should use Smithery's configuration flow.
+Both are managed as Replit Secrets.
 
 ## Development
 
-### Local Development
 ```bash
 npm install
-npm run dev
+npm start   # builds and runs on port 5000
 ```
-
-This will start the server with hot-reload using Smithery's development mode.
-
-### Building
-```bash
-npm run build
-```
-
-## API Rate Limits
-
-- **Add Delivery**: 20 requests per day
-- **Get Deliveries**: 20 requests per hour
-
-## Delivery Status Codes
-
-- 0: Completed delivery
-- 1: Frozen delivery (no recent updates)
-- 2: Delivery in transit
-- 3: Delivery expecting a pickup by the recipient
-- 4: Out for delivery
-- 5: Delivery not found
-- 6: Failed delivery attempt
-- 7: Delivery exception (requires attention)
-- 8: Carrier has received information but not the physical package yet
 
 ## Resources
 
-- [Parcel API Documentation - Add Delivery](https://parcelapp.net/help/api-add-delivery.html)
-- [Parcel API Documentation - View Deliveries](https://parcelapp.net/help/api-view-deliveries.html)
+- [Parcel API Documentation — Add Delivery](https://parcelapp.net/help/api-add-delivery.html)
+- [Parcel API Documentation — View Deliveries](https://parcelapp.net/help/api-view-deliveries.html)
 - [Supported Carriers List](https://api.parcel.app/external/supported_carriers.json)
 
 ## License

@@ -1,0 +1,1 @@
+- [MCP OAuth via Replit Auth](mcp-oauth-replit-auth.md) — app is its own OAuth 2.1 AS with Replit Auth as the login gate; see file for metadata-path, redirect_uri, and resource-binding gotchas.

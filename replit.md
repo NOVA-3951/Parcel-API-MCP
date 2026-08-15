@@ -1,12 +1,7 @@
 # Parcel MCP Server - Replit Project
 
 ## Overview
-This project is an HTTP MCP (Model Context Protocol) server for the Parcel delivery tracking API. It's designed to be deployed on Smithery, allowing AI assistants to interact with the Parcel API to manage and track deliveries.
-
-## Purpose
-- Enable AI assistants to add new deliveries to Parcel
-- Allow AI assistants to query delivery status (active or recent)
-- Provide information about supported carriers and status codes
+An HTTP MCP (Model Context Protocol) server for the Parcel delivery tracking API, hosted on Replit. Access to the MCP endpoint is restricted via OAuth 2.1: MCP clients complete an OAuth flow whose login step is Replit Auth, so only signed-in Replit users can obtain tokens and use the tools.
 
 ## Architecture
 
@@ -14,52 +9,42 @@ This project is an HTTP MCP (Model Context Protocol) server for the Parcel deliv
 ```
 /
 ├── src/
-│   └── index.ts          # Main MCP server implementation
+│   ├── index.ts          # Express app: MCP endpoint, OAuth router, login routes, landing page
+│   ├── oauthProvider.ts  # In-memory OAuth 2.1 authorization server provider (codes/tokens/DCR)
+│   ├── replitAuth.ts     # Replit Auth (OIDC) login via openid-client
+│   └── parcelServer.ts   # Parcel MCP tools (McpServer factory)
 ├── dist/                 # Compiled JavaScript (generated)
-├── package.json          # Project dependencies and scripts
-├── tsconfig.json         # TypeScript configuration
-├── smithery.yaml         # Smithery deployment configuration
-└── README.md             # Documentation
+├── package.json
+├── tsconfig.json
+└── README.md
 ```
 
 ### Technology Stack
-- **Runtime**: Node.js 20
-- **Language**: TypeScript
-- **MCP SDK**: @modelcontextprotocol/sdk v1.23.0
-- **Validation**: Zod v3
-- **Deployment**: Smithery
+- Node.js 20, TypeScript, Express 5
+- @modelcontextprotocol/sdk (Streamable HTTP transport + auth router/bearer middleware)
+- openid-client v6 for Replit Auth OIDC
+- express-session + memorystore for the browser login flow only
 
-### API Integration
-The server integrates with the Parcel API:
-- Base URL: `https://api.parcel.app/external`
-- Authentication: API key via header
-- Endpoints:
-  - POST `/add-delivery/` - Add new deliveries
-  - GET `/deliveries/` - Get deliveries (with optional filter_mode)
-  - GET `https://api.parcel.app/external/supported_carriers.json` - Get carriers list
+### Request flow
+1. MCP client hits `POST /mcp` → 401 with `WWW-Authenticate` → discovers metadata at `/.well-known/...`
+2. Client registers via `/register` (DCR), starts `/authorize` with PKCE
+3. `/authorize` stores a pending request and redirects to `/auth/login` → Replit Auth (`https://replit.com/oidc`)
+4. `/auth/callback` verifies the login, issues an auth code bound to the Replit user, redirects back to the client
+5. Client exchanges the code at `/token` for bearer + refresh tokens; `/mcp` requires the bearer token
+6. `/mcp` runs in stateless mode: fresh McpServer + transport per request
+
+### State & limitations
+- Clients, codes, and tokens are in-memory: restarts/redeploys force MCP clients to silently re-authenticate (they handle the 401). Reserved VM deployment recommended over autoscale with >1 instance.
+- By default any Replit-authenticated user may connect; set the `ALLOWED_REPLIT_USERS` env var (comma-separated Replit user IDs or emails) to restrict access. The allow-list is re-checked on every token verification.
+
+## Configuration (Replit Secrets)
+- `PARCEL_API_KEY` — server-side Parcel API key, never exposed to clients
+- `SESSION_SECRET` — session cookie secret for the login flow
 
 ## Recent Changes
-- 2025-11-30: Initial project setup
-- Created MCP server with 4 tools (add_delivery, get_deliveries, get_supported_carriers, get_delivery_status_codes)
-- Configured for Smithery deployment with API key management via configSchema
-- Set up TypeScript build pipeline
+- 2026-08-14: Revamped from Smithery stdio deployment to Replit-hosted HTTP MCP server with OAuth 2.1 + Replit Auth login gate. Removed smithery.yaml, @smithery/cli, and the old test harness.
+- 2025-11-30: Initial Smithery-based MCP server with 4 Parcel tools.
 
-## Configuration
-
-### Production (Smithery)
-Users provide their Parcel API key during the Smithery installation flow. The key is passed securely via base64-encoded CLI argument.
-
-### Testing (Local)
-For local development, set the `PARCEL_API_KEY` environment variable. This is a fallback mode intended for testing only.
-
-### Development
-Run `npm run dev` to start the development server with hot-reload.
-
-## Rate Limits
-- Add Delivery: 20 requests per day
-- Get Deliveries: 20 requests per hour
-
-## Security Notes
-- API keys are passed ephemerally through Smithery's config system
-- No API keys are stored in the codebase or version control
-- Users manage their own API keys through Smithery's installation process
+## Rate Limits (Parcel API)
+- Add Delivery: 20 requests/day
+- Get Deliveries: 20 requests/hour
