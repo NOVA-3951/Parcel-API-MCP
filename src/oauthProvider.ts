@@ -17,13 +17,13 @@ const AUTH_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-export interface ReplitUser {
+export interface AuthUser {
   id: string;
   email?: string;
   name?: string;
 }
 
-interface PendingAuthorization {
+export interface PendingAuthorization {
   clientId: string;
   params: AuthorizationParams;
   createdAt: number;
@@ -35,14 +35,14 @@ interface IssuedCode {
   redirectUri: string;
   resource?: string;
   scopes: string[];
-  user: ReplitUser;
+  user: AuthUser;
   expiresAt: number;
 }
 
 interface IssuedToken {
   clientId: string;
   scopes: string[];
-  user: ReplitUser;
+  user: AuthUser;
   resource?: string;
   expiresAt: number;
 }
@@ -50,7 +50,7 @@ interface IssuedToken {
 interface IssuedRefreshToken {
   clientId: string;
   scopes: string[];
-  user: ReplitUser;
+  user: AuthUser;
   resource?: string;
   expiresAt: number;
 }
@@ -82,12 +82,11 @@ class InMemoryClientsStore implements OAuthRegisteredClientsStore {
 /**
  * OAuth 2.1 authorization server provider for the MCP endpoint.
  *
- * The authorize step defers to Replit Auth: the user must sign in with
- * their Replit account before an authorization code is issued. Codes and
- * tokens are stored in memory; a server restart simply forces MCP clients
- * to re-authenticate.
+ * The authorize step defers to Clerk: the user must sign in before an
+ * authorization code is issued. Codes and tokens are stored in memory;
+ * a server restart simply forces MCP clients to re-authenticate.
  */
-export class ReplitAuthOAuthProvider implements OAuthServerProvider {
+export class ClerkAuthOAuthProvider implements OAuthServerProvider {
   readonly clientsStore = new InMemoryClientsStore();
 
   private pendingAuthorizations = new Map<string, PendingAuthorization>();
@@ -98,7 +97,7 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
   constructor(
     private loginPath: string,
     private canonicalResource: string,
-    private allowedUsers: Set<string> | null // null = allow any Replit user
+    private allowedUsers: Set<string> | null // null = allow any authenticated user
   ) {}
 
   /** Throws if a requested resource indicator doesn't match this server. */
@@ -112,7 +111,7 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
     }
   }
 
-  isUserAllowed(user: ReplitUser): boolean {
+  isUserAllowed(user: AuthUser): boolean {
     if (!this.allowedUsers || this.allowedUsers.size === 0) return true;
     const candidates = [user.id?.toLowerCase(), user.email?.toLowerCase()].filter(Boolean) as string[];
     return candidates.some((c) => this.allowedUsers!.has(c));
@@ -123,7 +122,7 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response
   ): Promise<void> {
-    // Stash the authorization request and send the user through Replit Auth.
+    // Stash the authorization request and send the user through Clerk sign-in.
     this.checkResource(params.resource);
     const pendingId = newToken("pending");
     this.pendingAuthorizations.set(pendingId, {
@@ -146,19 +145,24 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
     return pending;
   }
 
+  /** Cancel (delete) a pending authorization — call on user deny. */
+  cancelAuthorization(pendingId: string): void {
+    this.pendingAuthorizations.delete(pendingId);
+  }
+
   /**
-   * Called after a successful Replit Auth login. Issues an authorization
-   * code bound to the authenticated Replit user and returns the redirect
-   * URL to send the MCP client back to.
+   * Called after a successful Clerk sign-in. Issues an authorization
+   * code bound to the authenticated user and returns the redirect URL
+   * to send the MCP client back to.
    */
-  completeAuthorization(pendingId: string, user: ReplitUser): string {
+  completeAuthorization(pendingId: string, user: AuthUser): string {
     const pending = this.getPendingAuthorization(pendingId);
     if (!pending) {
       throw new Error("Authorization request expired or not found. Please retry from your MCP client.");
     }
     if (!this.isUserAllowed(user)) {
       this.pendingAuthorizations.delete(pendingId);
-      throw new Error("This Replit account is not authorized to access this MCP server.");
+      throw new Error("This account is not authorized to access this MCP server.");
     }
     this.pendingAuthorizations.delete(pendingId);
 
@@ -257,7 +261,7 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
     if (!this.isUserAllowed(record.user)) {
       // Allow-list may have changed since issuance.
       this.accessTokens.delete(token);
-      throw new InvalidTokenError("This Replit account is no longer authorized");
+      throw new InvalidTokenError("This account is no longer authorized");
     }
     return {
       token,
@@ -286,7 +290,7 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
   private issueTokens(
     clientId: string,
     scopes: string[],
-    user: ReplitUser,
+    user: AuthUser,
     resource?: string
   ): OAuthTokens {
     const accessToken = newToken("mcp");

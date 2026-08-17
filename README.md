@@ -1,6 +1,6 @@
 # Parcel MCP Server
 
-An HTTP MCP (Model Context Protocol) server for the Parcel delivery tracking API, hosted on Replit and secured with OAuth 2.1 backed by **Replit Auth**. Only users who sign in with a Replit account can obtain a token and use the tools.
+An HTTP MCP (Model Context Protocol) server for the Parcel delivery tracking API, hosted on Replit and secured with OAuth 2.1 backed by **Clerk**. Only users who sign in can obtain a token and use the tools.
 
 ## Features
 
@@ -23,8 +23,8 @@ The server implements the MCP authorization spec (OAuth 2.1):
 - `POST /mcp` — the MCP endpoint (Streamable HTTP transport). Requires a bearer token; unauthenticated requests get a 401 with a `WWW-Authenticate` challenge pointing at the discovery metadata.
 - `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/mcp` — discovery metadata so clients can auto-configure.
 - `/register` — dynamic client registration.
-- `/authorize` — sends the user through **Replit Auth** login before issuing an authorization code (PKCE required).
-- `/token` — exchanges codes/refresh tokens for bearer tokens bound to the authenticated Replit user.
+- `/authorize` — sends the user through **Clerk** sign-in and a consent step before issuing an authorization code (PKCE required).
+- `/token` — exchanges codes/refresh tokens for bearer tokens bound to the authenticated user.
 - `/revoke` — token revocation.
 
 Tokens are held in memory: a server restart just means MCP clients transparently re-authenticate.
@@ -37,17 +37,18 @@ Add the server URL to any MCP client that supports OAuth (Claude, Cursor, etc.):
 https://<your-repl-domain>/mcp
 ```
 
-On first connection a browser window opens and asks you to sign in with your Replit account. After login, the client receives a token and the tools become available.
+On first connection a browser window opens and asks you to sign in and approve access. After consent, the client receives a token and the tools become available.
 
 ## Configuration
 
 | Variable | Purpose |
 |----------|---------|
 | `PARCEL_API_KEY` | Server-side Parcel API key (from [web.parcelapp.net](https://web.parcelapp.net/)). Never exposed to clients. |
-| `SESSION_SECRET` | Secret for the login-flow session cookies. |
-| `ALLOWED_REPLIT_USERS` | Optional. Comma-separated Replit user IDs or emails allowed to connect. When unset, **any** Replit-authenticated user may connect. |
+| `CLERK_SECRET_KEY` | Auto-provisioned by Clerk setup. |
+| `CLERK_PUBLISHABLE_KEY` | Auto-provisioned by Clerk setup. |
+| `ALLOWED_REPLIT_USERS` | Optional. Comma-separated user IDs or emails allowed to connect. When unset, **any** authenticated user may connect. For users migrated from Replit Auth, their original Replit user ID is preserved as the Clerk external ID. |
 
-Both are managed as Replit Secrets.
+All are managed as Replit Secrets.
 
 ## Development
 

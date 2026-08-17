@@ -1,7 +1,7 @@
 {
   "name": "parcel-mcp-server",
   "version": "2.0.0",
-  "description": "HTTP MCP server for Parcel delivery tracking, secured with Replit Auth OAuth",
+  "description": "HTTP MCP server for Parcel delivery tracking, secured with Clerk OAuth",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -9,17 +9,23 @@
     "dev": "npm run build && node dist/index.js",
     "start": "npm run build && node dist/index.js"
   },
-  "keywords": ["mcp", "parcel", "delivery", "tracking", "oauth", "replit-auth"],
+  "keywords": [
+    "mcp",
+    "parcel",
+    "delivery",
+    "tracking",
+    "oauth",
+    "clerk"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@clerk/express": "^2.1.57",
+    "@clerk/shared": "^4.29.1",
     "@modelcontextprotocol/sdk": "^1.23.0",
     "@types/express": "^5.0.5",
-    "@types/express-session": "^1.18.2",
     "express": "^5.1.0",
-    "express-session": "^1.18.2",
-    "memorystore": "^1.6.7",
-    "openid-client": "^6.8.1",
+    "http-proxy-middleware": "^3.0.7",
     "zod": "^3.23.8"
   },
   "devDependencies": {

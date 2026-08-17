@@ -1,1 +1,1 @@
-- [MCP OAuth via Replit Auth](mcp-oauth-replit-auth.md) — app is its own OAuth 2.1 AS with Replit Auth as the login gate; see file for metadata-path, redirect_uri, and resource-binding gotchas.
+- [MCP OAuth via Clerk](mcp-oauth-clerk.md) — MCP OAuth AS now uses Clerk as its identity gate; see file for architecture and session-claims pattern.
