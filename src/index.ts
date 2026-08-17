@@ -110,6 +110,15 @@ app.use(
   })
 );
 
+// Compatibility aliases: some MCP clients probe the root well-known paths
+// instead of the path-suffixed variants that mcpAuthRouter serves.
+app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+  res.redirect(301, "/.well-known/oauth-protected-resource/mcp");
+});
+app.get("/.well-known/openid-configuration", (_req, res) => {
+  res.redirect(301, "/.well-known/oauth-authorization-server");
+});
+
 // --- Clerk sign-in gate for the OAuth authorize flow ---
 
 /** Parse cookies from the Cookie header without a middleware dependency. */
@@ -137,15 +146,26 @@ app.get("/auth/login", (req, res) => {
     return;
   }
 
-  const publishableKey = process.env.CLERK_PUBLISHABLE_KEY ?? "";
+  // Both this and clerkProxyMiddleware use REPLIT_DOMAINS as the production predicate.
+  const isProduction = !!process.env.REPLIT_DOMAINS;
+
+  // Use the same host-derived publishable key as clerkMiddleware so the
+  // browser and server agree on the Clerk instance.
+  const publishableKey = isProduction
+    ? publishableKeyFromHost(getValidatedClerkHost(req), process.env.CLERK_PUBLISHABLE_KEY) ?? ""
+    : process.env.CLERK_PUBLISHABLE_KEY ?? "";
+
+  // In production, Clerk-JS must route all Frontend API calls through our
+  // same-origin proxy; contacting Clerk's FAPI directly fails for keys bound
+  // to this domain. In development the pk_test key talks to FAPI directly.
+  const clerkProxyUrl = isProduction ? `${getBaseUrl()}${CLERK_PROXY_PATH}` : null;
+
   // After sign-in send user to the consent page (not directly to complete auth)
   // so they can explicitly approve the requesting client.
   const consentUrl = `/auth/consent?pending=${encodeURIComponent(pendingId)}`;
 
-  // Both this and clerkProxyMiddleware use REPLIT_DOMAINS as the production predicate.
-  const isProduction = !!process.env.REPLIT_DOMAINS;
   const clerkJsUrl = isProduction
-    ? `/api/__clerk/npm/@clerk/clerk-js@latest/dist/clerk.browser.js`
+    ? `${CLERK_PROXY_PATH}/npm/@clerk/clerk-js@latest/dist/clerk.browser.js`
     : `https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js`;
 
   res.type("html").send(`<!DOCTYPE html>
@@ -176,8 +196,11 @@ app.get("/auth/login", (req, res) => {
       script.onerror = reject;
     });
 
-    const clerk = new window.Clerk(${JSON.stringify(publishableKey)});
-    await clerk.load();
+    const proxyUrl = ${JSON.stringify(clerkProxyUrl)};
+    const clerk = proxyUrl
+      ? new window.Clerk(${JSON.stringify(publishableKey)}, { proxyUrl })
+      : new window.Clerk(${JSON.stringify(publishableKey)});
+    await clerk.load(proxyUrl ? { proxyUrl } : undefined);
 
     if (clerk.user) {
       // Already signed in — go straight to consent
@@ -338,9 +361,29 @@ app.post("/auth/consent", async (req, res) => {
 
   const action = req.body?.action;
 
+  // Build the OAuth error callback for the (already validated) client
+  // redirect_uri so MCP clients waiting on the callback complete cleanly
+  // instead of hanging on a local HTML page.
+  const pending = provider.getPendingAuthorization(pendingId);
+  const errorRedirect = (error: string, description: string): string | null => {
+    if (!pending) return null;
+    const url = new URL(pending.params.redirectUri);
+    url.searchParams.set("error", error);
+    url.searchParams.set("error_description", description);
+    if (pending.params.state !== undefined) {
+      url.searchParams.set("state", pending.params.state);
+    }
+    return url.toString();
+  };
+
   if (action === "deny") {
     // Explicitly cancel the pending authorization so it cannot be approved later.
+    const denyUrl = errorRedirect("access_denied", "The user denied the authorization request.");
     provider.cancelAuthorization(pendingId);
+    if (denyUrl) {
+      res.redirect(denyUrl);
+      return;
+    }
     res.status(403).type("html").send(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Access Denied</title>
 <style>:root{color-scheme:dark}body{font-family:ui-sans-serif,system-ui,sans-serif;background:#0f1115;color:#e6e8eb;display:flex;align-items:center;justify-content:center;min-height:100dvh;margin:0;padding:1.5rem;text-align:center}</style>
@@ -365,6 +408,13 @@ app.post("/auth/consent", async (req, res) => {
     res.redirect(redirectUrl);
   } catch (error) {
     console.error("Auth consent failed:", error);
+    // Allow-list rejection (or other failure) — complete the client callback
+    // with a standard OAuth error when the redirect target is known.
+    const failUrl = errorRedirect("access_denied", "Authorization failed: this account is not permitted or the request expired.");
+    if (failUrl) {
+      res.redirect(failUrl);
+      return;
+    }
     res
       .status(400)
       .send("Authorization failed or expired. Please retry from your MCP client.");
