@@ -373,6 +373,25 @@ app.post("/auth/consent", async (req, res) => {
 
 // --- MCP endpoint (bearer token required) ---
 
+// CORS for browser-based MCP clients (e.g. Smithery playground). The OAuth
+// endpoints from mcpAuthRouter already send CORS headers; /mcp must too.
+app.use("/mcp", (req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Expose-Headers", "WWW-Authenticate, Mcp-Session-Id");
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      req.headers["access-control-request-headers"]?.toString() ??
+        "Authorization, Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version"
+    );
+    res.setHeader("Vary", "Access-Control-Request-Headers");
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 const bearerAuth = requireBearerAuth({
   verifier: provider,
   resourceMetadataUrl: `${baseUrl}/.well-known/oauth-protected-resource/mcp`,
