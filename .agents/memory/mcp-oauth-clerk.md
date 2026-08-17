@@ -18,6 +18,8 @@ The MCP endpoint is protected per the MCP authorization spec: the app is its own
 
 5. **Production predicate consistency.** Both `clerkProxyMiddleware` and the Clerk-JS URL in `/auth/login` use `REPLIT_DOMAINS` (not `NODE_ENV`) as their production signal so they stay in sync.
 
+6. **Throw SDK OAuth error classes, never plain `Error`.** The SDK's bearer middleware and token endpoint map `InvalidTokenError`/`InvalidGrantError`/`OAuthError` to proper 401/400 responses; a plain `Error` becomes HTTP 500, which stops MCP clients from re-authenticating after in-memory tokens are wiped by a restart/redeploy.
+
 **How to apply:**
 - Login → consent → approval creates the code; `clerkMiddleware` + `getAuth()` validates the session at the consent step.
 - `sessionClaims.userId` is used for all identity lookups (migrated Replit Auth subject ID preserved as Clerk externalId for existing users; Clerk native ID for new users).

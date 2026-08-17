@@ -37,3 +37,7 @@ externalPort = 80
 deploymentTarget = "vm"
 run = ["node", "dist/index.js"]
 build = ["npm", "run", "build"]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 180000
