@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { Pool } from "pg";
 import type { Response } from "express";
 import type {
   OAuthServerProvider,
@@ -39,42 +40,89 @@ interface IssuedCode {
   expiresAt: number;
 }
 
-interface IssuedToken {
-  clientId: string;
-  scopes: string[];
-  user: AuthUser;
-  resource?: string;
-  expiresAt: number;
-}
-
-interface IssuedRefreshToken {
-  clientId: string;
-  scopes: string[];
-  user: AuthUser;
-  resource?: string;
-  expiresAt: number;
-}
-
 function newToken(prefix: string): string {
   return `${prefix}_${randomBytes(32).toString("hex")}`;
 }
 
-class InMemoryClientsStore implements OAuthRegisteredClientsStore {
-  private clients = new Map<string, OAuthClientInformationFull>();
+/**
+ * Lazily-initialised singleton pg Pool.
+ * DATABASE_URL is injected by Replit for the project's PostgreSQL database.
+ */
+let _pool: Pool | null = null;
+function getPool(): Pool {
+  if (!_pool) {
+    _pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    _pool.on("error", (err) => {
+      console.error("pg pool error:", err);
+    });
+  }
+  return _pool;
+}
 
-  getClient(clientId: string) {
-    return this.clients.get(clientId);
+/**
+ * Idempotent schema initialization. Must be awaited before the server starts
+ * accepting requests so that the tables exist on every fresh deployment.
+ */
+export async function initSchema(): Promise<void> {
+  await getPool().query(`
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+      client_id TEXT PRIMARY KEY,
+      client_data JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+      token TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      scopes TEXT[] NOT NULL,
+      user_data JSONB NOT NULL,
+      resource TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+      token TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      scopes TEXT[] NOT NULL,
+      user_data JSONB NOT NULL,
+      resource TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS oauth_access_tokens_expires_at_idx  ON oauth_access_tokens(expires_at);
+    CREATE INDEX IF NOT EXISTS oauth_refresh_tokens_expires_at_idx ON oauth_refresh_tokens(expires_at);
+  `);
+  console.log("OAuth schema initialized");
+}
+
+/**
+ * Clients store backed by PostgreSQL.
+ * Clients are registered once (DCR) and survive restarts.
+ */
+class PgClientsStore implements OAuthRegisteredClientsStore {
+  async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
+    const { rows } = await getPool().query<{ client_data: OAuthClientInformationFull }>(
+      "SELECT client_data FROM oauth_clients WHERE client_id = $1",
+      [clientId]
+    );
+    return rows[0]?.client_data;
   }
 
-  registerClient(
+  async registerClient(
     client: Omit<OAuthClientInformationFull, "client_id" | "client_id_issued_at">
-  ): OAuthClientInformationFull {
+  ): Promise<OAuthClientInformationFull> {
     const full: OAuthClientInformationFull = {
       ...client,
       client_id: newToken("client"),
       client_id_issued_at: Math.floor(Date.now() / 1000),
     };
-    this.clients.set(full.client_id, full);
+    await getPool().query(
+      `INSERT INTO oauth_clients (client_id, client_data) VALUES ($1, $2)
+       ON CONFLICT (client_id) DO UPDATE SET client_data = EXCLUDED.client_data`,
+      [full.client_id, JSON.stringify(full)]
+    );
     return full;
   }
 }
@@ -83,16 +131,20 @@ class InMemoryClientsStore implements OAuthRegisteredClientsStore {
  * OAuth 2.1 authorization server provider for the MCP endpoint.
  *
  * The authorize step defers to Clerk: the user must sign in before an
- * authorization code is issued. Codes and tokens are stored in memory;
- * a server restart simply forces MCP clients to re-authenticate.
+ * authorization code is issued.
+ *
+ * - Registered clients, access tokens, and refresh tokens are stored in
+ *   PostgreSQL so they survive server restarts and redeploys.
+ * - Pending authorizations and authorization codes remain in memory because
+ *   they are short-lived (10 min), single-use, and do not need to survive
+ *   restarts.
  */
 export class ClerkAuthOAuthProvider implements OAuthServerProvider {
-  readonly clientsStore = new InMemoryClientsStore();
+  readonly clientsStore = new PgClientsStore();
 
+  // Short-lived, in-memory only (10 min TTL, single-use).
   private pendingAuthorizations = new Map<string, PendingAuthorization>();
   private codes = new Map<string, IssuedCode>();
-  private accessTokens = new Map<string, IssuedToken>();
-  private refreshTokens = new Map<string, IssuedRefreshToken>();
 
   constructor(
     private loginPath: string,
@@ -233,43 +285,84 @@ export class ClerkAuthOAuthProvider implements OAuthServerProvider {
     resource?: URL
   ): Promise<OAuthTokens> {
     this.checkResource(resource);
-    const record = this.refreshTokens.get(refreshToken);
-    if (!record || record.clientId !== client.client_id) {
-      throw new InvalidGrantError("Invalid refresh token");
+
+    const pool = getPool();
+    const conn = await pool.connect();
+    try {
+      await conn.query("BEGIN");
+
+      // Lock the row so concurrent refresh requests can't double-use it.
+      const { rows } = await conn.query<{
+        client_id: string;
+        scopes: string[];
+        user_data: AuthUser;
+        resource: string | null;
+        expires_at: string;
+      }>(
+        "SELECT client_id, scopes, user_data, resource, expires_at FROM oauth_refresh_tokens WHERE token = $1 FOR UPDATE",
+        [refreshToken]
+      );
+      const record = rows[0];
+      if (!record || record.client_id !== client.client_id) {
+        await conn.query("ROLLBACK");
+        throw new InvalidGrantError("Invalid refresh token");
+      }
+      if (new Date(record.expires_at).getTime() < Date.now()) {
+        await conn.query("DELETE FROM oauth_refresh_tokens WHERE token = $1", [refreshToken]);
+        await conn.query("COMMIT");
+        throw new InvalidGrantError("Refresh token expired");
+      }
+
+      // Atomically delete the old refresh token and issue new tokens.
+      await conn.query("DELETE FROM oauth_refresh_tokens WHERE token = $1", [refreshToken]);
+
+      const grantedScopes = scopes?.length
+        ? scopes.filter((s) => record.scopes.includes(s))
+        : record.scopes;
+
+      const newTokens = await this.issueTokensInConn(conn, record.client_id, grantedScopes, record.user_data, record.resource ?? undefined);
+      await conn.query("COMMIT");
+      return newTokens;
+    } catch (err) {
+      // Roll back only if there is an active transaction (i.e. err came from within BEGIN).
+      try { await conn.query("ROLLBACK"); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      conn.release();
     }
-    if (record.expiresAt < Date.now()) {
-      this.refreshTokens.delete(refreshToken);
-      throw new InvalidGrantError("Refresh token expired");
-    }
-    // Rotate the refresh token.
-    this.refreshTokens.delete(refreshToken);
-    const grantedScopes = scopes?.length
-      ? scopes.filter((s) => record.scopes.includes(s))
-      : record.scopes;
-    return this.issueTokens(record.clientId, grantedScopes, record.user, record.resource);
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    const record = this.accessTokens.get(token);
+    const { rows } = await getPool().query<{
+      client_id: string;
+      scopes: string[];
+      user_data: AuthUser;
+      resource: string | null;
+      expires_at: string;
+    }>(
+      "SELECT client_id, scopes, user_data, resource, expires_at FROM oauth_access_tokens WHERE token = $1",
+      [token]
+    );
+    const record = rows[0];
     if (!record) {
       throw new InvalidTokenError("Invalid access token");
     }
-    if (record.expiresAt < Date.now()) {
-      this.accessTokens.delete(token);
+    if (new Date(record.expires_at).getTime() < Date.now()) {
+      await getPool().query("DELETE FROM oauth_access_tokens WHERE token = $1", [token]);
       throw new InvalidTokenError("Access token expired");
     }
-    if (!this.isUserAllowed(record.user)) {
+    if (!this.isUserAllowed(record.user_data)) {
       // Allow-list may have changed since issuance.
-      this.accessTokens.delete(token);
+      await getPool().query("DELETE FROM oauth_access_tokens WHERE token = $1", [token]);
       throw new InvalidTokenError("This account is no longer authorized");
     }
     return {
       token,
-      clientId: record.clientId,
+      clientId: record.client_id,
       scopes: record.scopes,
-      expiresAt: Math.floor(record.expiresAt / 1000),
+      expiresAt: Math.floor(new Date(record.expires_at).getTime() / 1000),
       resource: new URL(this.canonicalResource),
-      extra: { user: record.user },
+      extra: { user: record.user_data },
     };
   }
 
@@ -277,38 +370,60 @@ export class ClerkAuthOAuthProvider implements OAuthServerProvider {
     client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest
   ): Promise<void> {
-    const access = this.accessTokens.get(request.token);
-    if (access && access.clientId === client.client_id) {
-      this.accessTokens.delete(request.token);
-    }
-    const refresh = this.refreshTokens.get(request.token);
-    if (refresh && refresh.clientId === client.client_id) {
-      this.refreshTokens.delete(request.token);
-    }
+    // Try both tables; delete only if the token belongs to this client.
+    await getPool().query(
+      "DELETE FROM oauth_access_tokens WHERE token = $1 AND client_id = $2",
+      [request.token, client.client_id]
+    );
+    await getPool().query(
+      "DELETE FROM oauth_refresh_tokens WHERE token = $1 AND client_id = $2",
+      [request.token, client.client_id]
+    );
   }
 
-  private issueTokens(
+  private async issueTokens(
     clientId: string,
     scopes: string[],
     user: AuthUser,
     resource?: string
-  ): OAuthTokens {
+  ): Promise<OAuthTokens> {
+    const pool = getPool();
+    const conn = await pool.connect();
+    try {
+      return await this.issueTokensInConn(conn, clientId, scopes, user, resource);
+    } finally {
+      conn.release();
+    }
+  }
+
+  /**
+   * Insert new access + refresh tokens using the supplied client connection so
+   * that callers inside an existing transaction (e.g. refresh-token rotation)
+   * can include the inserts atomically.
+   */
+  private async issueTokensInConn(
+    conn: import("pg").PoolClient,
+    clientId: string,
+    scopes: string[],
+    user: AuthUser,
+    resource?: string
+  ): Promise<OAuthTokens> {
     const accessToken = newToken("mcp");
     const refreshToken = newToken("rt");
-    this.accessTokens.set(accessToken, {
-      clientId,
-      scopes,
-      user,
-      resource,
-      expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
-    });
-    this.refreshTokens.set(refreshToken, {
-      clientId,
-      scopes,
-      user,
-      resource,
-      expiresAt: Date.now() + REFRESH_TOKEN_TTL_MS,
-    });
+    const accessExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_MS);
+    const refreshExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
+
+    await conn.query(
+      `INSERT INTO oauth_access_tokens (token, client_id, scopes, user_data, resource, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [accessToken, clientId, scopes, JSON.stringify(user), resource ?? null, accessExpiresAt]
+    );
+    await conn.query(
+      `INSERT INTO oauth_refresh_tokens (token, client_id, scopes, user_data, resource, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [refreshToken, clientId, scopes, JSON.stringify(user), resource ?? null, refreshExpiresAt]
+    );
+
     return {
       access_token: accessToken,
       token_type: "bearer",
@@ -320,17 +435,20 @@ export class ClerkAuthOAuthProvider implements OAuthServerProvider {
 
   private cleanup(): void {
     const now = Date.now();
+    // Clean up in-memory short-lived state.
     for (const [id, p] of this.pendingAuthorizations) {
       if (now - p.createdAt > AUTH_CODE_TTL_MS) this.pendingAuthorizations.delete(id);
     }
     for (const [c, r] of this.codes) {
       if (r.expiresAt < now) this.codes.delete(c);
     }
-    for (const [t, r] of this.accessTokens) {
-      if (r.expiresAt < now) this.accessTokens.delete(t);
-    }
-    for (const [t, r] of this.refreshTokens) {
-      if (r.expiresAt < now) this.refreshTokens.delete(t);
-    }
+    // Opportunistically purge expired DB tokens (fire-and-forget, errors are non-fatal).
+    const pool = getPool();
+    pool.query("DELETE FROM oauth_access_tokens WHERE expires_at < NOW()").catch((err) => {
+      console.warn("Failed to purge expired access tokens:", err);
+    });
+    pool.query("DELETE FROM oauth_refresh_tokens WHERE expires_at < NOW()").catch((err) => {
+      console.warn("Failed to purge expired refresh tokens:", err);
+    });
   }
 }

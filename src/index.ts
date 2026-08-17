@@ -5,7 +5,7 @@ import { publishableKeyFromHost } from "@clerk/shared/keys";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { ClerkAuthOAuthProvider, type AuthUser } from "./oauthProvider.js";
+import { ClerkAuthOAuthProvider, initSchema, type AuthUser } from "./oauthProvider.js";
 import { createParcelMcpServer } from "./parcelServer.js";
 import {
   CLERK_PROXY_PATH,
@@ -229,7 +229,7 @@ app.get("/auth/login", (req, res) => {
  *   cookie, and embeds it as a hidden form field.
  * - The user sees the requesting client's name and scopes, and must click Approve.
  */
-app.get("/auth/consent", (req, res) => {
+app.get("/auth/consent", async (req, res) => {
   const pendingId = req.query.pending;
   if (typeof pendingId !== "string") {
     res.status(400).send("Missing pending authorization ID. Please retry from your MCP client.");
@@ -252,7 +252,7 @@ app.get("/auth/consent", (req, res) => {
     return;
   }
 
-  const client = provider.clientsStore.getClient(pending.clientId);
+  const client = await provider.clientsStore.getClient(pending.clientId);
   const clientName = client?.client_name ?? pending.clientId;
   const scopes = pending.params.scopes ?? ["mcp"];
   const displayName = claims?.firstName
@@ -552,6 +552,10 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+// Ensure the database schema exists before accepting any requests.
+// Uses CREATE TABLE IF NOT EXISTS so this is safe on every restart.
+await initSchema();
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Parcel MCP server listening on port ${PORT}`);

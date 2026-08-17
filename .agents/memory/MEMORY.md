@@ -1,1 +1,2 @@
 - [MCP OAuth via Clerk](mcp-oauth-clerk.md) — MCP OAuth AS now uses Clerk as its identity gate; see file for architecture and session-claims pattern.
+- [OAuth token persistence](oauth-token-persistence.md) — clients/access/refresh tokens stored in PostgreSQL; codes and pending auths remain in memory.
