@@ -11,6 +11,7 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { InvalidGrantError, InvalidRequestError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 
 const AUTH_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -105,7 +106,7 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
     if (resource === undefined) return;
     const requested = resource.toString().replace(/\/$/, "");
     if (requested !== this.canonicalResource.replace(/\/$/, "")) {
-      throw new Error(
+      throw new InvalidRequestError(
         `Requested resource ${requested} does not match this server's resource ${this.canonicalResource}`
       );
     }
@@ -186,7 +187,7 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
   ): Promise<string> {
     const record = this.codes.get(authorizationCode);
     if (!record || record.clientId !== client.client_id) {
-      throw new Error("Invalid authorization code");
+      throw new InvalidGrantError("Invalid authorization code");
     }
     return record.codeChallenge;
   }
@@ -200,14 +201,21 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
   ): Promise<OAuthTokens> {
     const record = this.codes.get(authorizationCode);
     if (!record || record.clientId !== client.client_id) {
-      throw new Error("Invalid authorization code");
+      throw new InvalidGrantError("Invalid authorization code");
     }
     this.codes.delete(authorizationCode); // single use
     if (record.expiresAt < Date.now()) {
-      throw new Error("Authorization code expired");
+      throw new InvalidGrantError("Authorization code expired");
     }
-    if (redirectUri !== record.redirectUri) {
-      throw new Error("redirect_uri is required and must exactly match the authorization request");
+    if (redirectUri !== undefined && redirectUri !== record.redirectUri) {
+      throw new InvalidGrantError("redirect_uri must exactly match the authorization request");
+    }
+    if (
+      redirectUri === undefined &&
+      (client.redirect_uris.length !== 1 || client.redirect_uris[0] !== record.redirectUri)
+    ) {
+      // OAuth 2.1: redirect_uri may only be omitted when unambiguous.
+      throw new InvalidGrantError("redirect_uri is required for this token exchange");
     }
     this.checkResource(resource);
 
@@ -223,11 +231,11 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
     this.checkResource(resource);
     const record = this.refreshTokens.get(refreshToken);
     if (!record || record.clientId !== client.client_id) {
-      throw new Error("Invalid refresh token");
+      throw new InvalidGrantError("Invalid refresh token");
     }
     if (record.expiresAt < Date.now()) {
       this.refreshTokens.delete(refreshToken);
-      throw new Error("Refresh token expired");
+      throw new InvalidGrantError("Refresh token expired");
     }
     // Rotate the refresh token.
     this.refreshTokens.delete(refreshToken);
@@ -240,16 +248,16 @@ export class ReplitAuthOAuthProvider implements OAuthServerProvider {
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     const record = this.accessTokens.get(token);
     if (!record) {
-      throw new Error("Invalid access token");
+      throw new InvalidTokenError("Invalid access token");
     }
     if (record.expiresAt < Date.now()) {
       this.accessTokens.delete(token);
-      throw new Error("Access token expired");
+      throw new InvalidTokenError("Access token expired");
     }
     if (!this.isUserAllowed(record.user)) {
       // Allow-list may have changed since issuance.
       this.accessTokens.delete(token);
-      throw new Error("This Replit account is no longer authorized");
+      throw new InvalidTokenError("This Replit account is no longer authorized");
     }
     return {
       token,
