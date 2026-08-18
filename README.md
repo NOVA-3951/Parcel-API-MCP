@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/nova-3951-parcel-api-mcp-badge.png)](https://mseep.ai/app/nova-3951-parcel-api-mcp)
+
 # Parcel MCP Server
 
 An HTTP MCP (Model Context Protocol) server for the Parcel delivery tracking API, hosted on Replit and secured with OAuth 2.1 backed by **Clerk**. Only users who sign in can obtain a token and use the tools.
